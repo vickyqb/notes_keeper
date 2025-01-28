@@ -1,3 +1,11 @@
+type Note = record { id : nat32; content : text; owner : text };
+type Result = variant { Ok : text; Err : text };
 service : {
-    "greet": (text) -> (text) query;
+  add_note : (text) -> ();
+  delete_note : (nat32) -> (Result);
+  get_note_by_id : (nat32) -> (opt Note) query;
+  get_notes : () -> (vec Note) query;
+  get_notes_by_owner : (text) -> (vec Note) query;
+  greet : (text) -> (text) query;
+  update_note : (nat32, text) -> ();
 }
