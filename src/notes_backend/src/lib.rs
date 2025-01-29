@@ -140,6 +140,7 @@ fn get_notes_by_owner(owner: String) -> Vec<Note> {
     })
 }
 
+
 #[query]
 fn get_pid() -> String {
     return api::caller().to_string();
