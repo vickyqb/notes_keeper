@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use candid::{CandidType, Encode, Decode};
 use ic_stable_structures::{
     memory_manager::{MemoryId, MemoryManager, VirtualMemory},
-    Storable, StableBTreeMap, DefaultMemoryImpl,storable::Bound
+    Storable, StableBTreeMap, DefaultMemoryImpl, storable::Bound
 };
 use std::{borrow::Cow, cell::RefCell};
 type Memory = VirtualMemory<DefaultMemoryImpl>;
@@ -12,7 +12,8 @@ type Memory = VirtualMemory<DefaultMemoryImpl>;
 struct Note {
     id: u32,
     content: String,
-    owner:String
+    owner: String,
+    shared_with: Vec<String>,
 }
 
 impl Storable for Note {
@@ -37,75 +38,111 @@ thread_local! {
 }
 
 #[query]
-fn get_notes()-> Vec<Note> {
+fn get_notes() -> Vec<Note> {
+    let caller = api::caller().to_string();
     NOTES.with(|notes| {
-        notes.borrow().iter().map(|(_, note)| note.clone()).collect()
+        notes.borrow().iter()
+            .map(|(_, note)| note.clone())
+            .filter(|note| note.owner == caller || note.shared_with.contains(&caller))
+            .collect()
     })
 }
 
 #[query]
-fn get_note_by_id(id:u32)->Option<Note>{
-    NOTES.with(|notes| notes.borrow().get(&id))
+fn get_note_by_id(id: u32) -> Option<Note> {
+    let caller = api::caller().to_string();
+    NOTES.with(|notes| {
+        notes.borrow().get(&id).filter(|note| note.owner == caller || note.shared_with.contains(&caller))
+    })
 }
 
-
-#[update ]
-fn add_note(content :String){
+#[update]
+fn add_note(content: String) {
     let note = Note {
         id: NOTES.with(|notes| notes.borrow().len() as u32),
         content,
-        owner: api::caller().to_string()
+        owner: api::caller().to_string(),
+        shared_with: Vec::new(),
     };
     NOTES.with(|notes| {
-        notes.borrow_mut().insert(note.id.clone(), note);
-    });
-    
-}
-#[update ]
-fn update_note(id : u32, content :String){
-    let note = Note {
-        id: id,
-        content,
-        owner: api::caller().to_string()
-    };
-    NOTES.with(|notes| {
-        notes.borrow_mut().insert(note.id.clone(), note);
+        notes.borrow_mut().insert(note.id, note);
     });
 }
 
 #[update]
-fn delete_note(note_id:u32)->Result<String,String>{
-    let delete_result = NOTES.with(|notes| {
+fn update_note(id: u32, content: String) -> Result<String, String> {
+    let caller = api::caller().to_string();
+    NOTES.with(|notes| {
         let mut notes = notes.borrow_mut();
-        if notes.remove(&note_id).is_some() {
-            return Ok("Note has deleted.".to_string());
+        if let Some(mut note) = notes.get(&id) {
+            if note.owner == caller {
+                note.content = content;
+                notes.insert(id, note);
+                Ok("Note updated successfully".to_string())
+            } else {
+                Err("Permission denied: Only the owner can update the note".to_string())
+            }
         } else {
-            return Err("No note found.".to_string());
-        };
-    });
-    return delete_result;
+            Err("Note not found".to_string())
+        }
+    })
 }
 
-#[query]
-fn greet(name:String)->String{
-    format!("hello {}",name)
+#[update]
+fn delete_note(id: u32) -> Result<String, String> {
+    let caller = api::caller().to_string();
+    NOTES.with(|notes| {
+        let mut notes = notes.borrow_mut();
+        if let Some(note) = notes.get(&id) {
+            if note.owner == caller {
+                notes.remove(&id);
+                Ok("Note has been deleted.".to_string())
+            } else {
+                Err("Permission denied: Only the owner can delete the note".to_string())
+            }
+        } else {
+            Err("No note found.".to_string())
+        }
+    })
+}
+
+#[update]
+fn share_note(id: u32, user: String) -> Result<String, String> {
+    let caller = api::caller().to_string();
+    NOTES.with(|notes| {
+        let mut notes = notes.borrow_mut();
+        if let Some(mut note) = notes.get(&id) {
+            if note.owner == caller {
+                if !note.shared_with.contains(&user) {
+                    note.shared_with.push(user);
+                    notes.insert(id, note);
+                    Ok("Note shared successfully.".to_string())
+                } else {
+                    Err("User already has access to this note.".to_string())
+                }
+            } else {
+                Err("Permission denied: Only the owner can share the note.".to_string())
+            }
+        } else {
+            Err("Note not found.".to_string())
+        }
+    })
 }
 
 #[query]
 fn get_notes_by_owner(owner: String) -> Vec<Note> {
     NOTES.with(|notes| {
-        notes
-            .borrow()
+        notes.borrow()
             .iter()
-            .filter_map(|(_, note)| {
-                if note.owner == owner {
-                    Some(note)
-                } else {
-                    None
-                }
-            })
+            .map(|(_, note)| note.clone())
+            .filter(|note| note.owner == owner)
             .collect()
     })
+}
+
+#[query]
+fn get_principal() -> String {
+    return api::caller().to_string();
 }
 
 export_candid!();
